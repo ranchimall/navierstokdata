@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Token profit tracker</title>
 <style>
 :root{--bg:#f2f5f7;--card:#fff;--ink:#14202b;--mute:#5d6b78;--line:#d5dce2;--gain:#0b7a4b;--loss:#b3261e;--acc:#2b5c8a;--warn:#fff3cd}
 @media (prefers-color-scheme:dark){:root{--bg:#10171d;--card:#18222b;--ink:#e6edf2;--mute:#93a3b0;--line:#2b3946;--gain:#4cc38a;--loss:#ff7b72;--acc:#7db3e6;--warn:#4a3d10}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:1180px;margin:0 auto;padding:24px 16px 48px}
+main{max-width:1180px;margin:0 auto;padding:24px max(16px,env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
 h1{margin:0 0 4px;font-size:26px;letter-spacing:-.01em}
 .sub{color:var(--mute);font-size:13px;word-break:break-all}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:20px 0}
@@ -20,7 +20,7 @@ h1{margin:0 0 4px;font-size:26px;letter-spacing:-.01em}
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0 12px}
 .tab{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:7px 14px;border-radius:6px;font:inherit;cursor:pointer}
 .tab[aria-selected=true]{background:var(--acc);border-color:var(--acc);color:#fff}
-input{flex:1;min-width:180px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font:inherit}
+input,select{flex:1;min-width:180px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font:inherit}
 :focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .wrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--card)}
 table{border-collapse:collapse;width:100%}
@@ -29,9 +29,28 @@ th{cursor:pointer;user-select:none;color:var(--mute);font-weight:600;position:st
 th[aria-sort=ascending]::after{content:" ▲"}th[aria-sort=descending]::after{content:" ▼"}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 td.notes{white-space:normal;min-width:200px;color:var(--mute);font-size:13px}
+.sortsel{display:none}
 .pos{color:var(--gain)}.neg{color:var(--loss)}
 a{color:var(--acc)}
 .foot{color:var(--mute);font-size:12.5px;margin-top:16px}
+@media (max-width:720px){
+  main{padding-top:16px}
+  h1{font-size:22px}
+  .stats{grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
+  .stat{padding:10px 12px}.stat b{font-size:18px}
+  .tab{flex:1;padding:10px 12px}
+  input,select{flex:1 1 100%;min-height:44px;font-size:16px}
+  .sortsel{display:block}
+  .wrap{border:0;background:none;overflow:visible}
+  table,thead,tbody,tr,td{display:block}
+  thead{display:none}
+  tr{background:var(--card);border:1px solid var(--line);border-radius:6px;margin-bottom:10px;padding:6px 12px}
+  td{display:flex;justify-content:space-between;gap:12px;border:0;padding:5px 0;white-space:normal;text-align:right}
+  td::before{content:attr(data-label);color:var(--mute);text-align:left;flex:none}
+  td:empty{display:none}
+  td.notes{min-width:0}
+}
+@media (max-width:380px){.stats{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -43,6 +62,7 @@ a{color:var(--acc)}
 <div class="bar" role="tablist">
   <button class="tab" role="tab" id="t-sellers" aria-selected="true">Sellers</button>
   <button class="tab" role="tab" id="t-holders" aria-selected="false">Current holders</button>
+  <select id="sort" class="sortsel" aria-label="Sort by"></select>
   <input id="q" type="search" placeholder="Search wallet address" aria-label="Search wallet address">
 </div>
 <div class="wrap"><table id="tbl"></table></div>
@@ -80,15 +100,21 @@ function render() {
     return (typeof x === "string" ? x.localeCompare(y) : x - y) * sortDir;
   });
   const head = cols.map(([k, l, t]) => `<th data-k="${k}" class="${t === "m" || t === "n" ? "n" : ""}" aria-sort="${k === sortKey ? (sortDir > 0 ? "ascending" : "descending") : "none"}">${l}</th>`).join("");
-  const body = rows.map(r => "<tr>" + cols.map(([k, , t, signed]) => {
+  const body = rows.map(r => "<tr>" + cols.map(([k, l, t, signed]) => {
     const v = r[k];
-    if (k === "wallet") return `<td><a href="https://solscan.io/account/${v}" target="_blank" rel="noopener" title="${v}">${v.slice(0, 4)}…${v.slice(-4)}</a></td>`;
-    if (t === "m") return `<td class="n ${signed ? cls(v) : ""}">${money(v)}</td>`;
-    if (t === "n") return `<td class="n">${v.toLocaleString("en-US", {maximumFractionDigits: 2})}</td>`;
-    if (t === "x") return `<td class="notes">${esc(v)}</td>`;
-    return `<td>${esc(v)}</td>`;
+    if (k === "wallet") return `<td data-label="${l}"><a href="https://solscan.io/account/${v}" target="_blank" rel="noopener" title="${v}">${v.slice(0, 4)}…${v.slice(-4)}</a></td>`;
+    if (t === "m") return `<td data-label="${l}" class="n ${signed ? cls(v) : ""}">${money(v)}</td>`;
+    if (t === "n") return `<td data-label="${l}" class="n">${v.toLocaleString("en-US", {maximumFractionDigits: 2})}</td>`;
+    if (t === "x") return `<td data-label="${l}" class="notes">${esc(v)}</td>`;
+    return `<td data-label="${l}">${esc(v)}</td>`;
   }).join("") + "</tr>").join("");
   $("tbl").innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${cols.length}">Nothing to show.</td></tr>`}</tbody>`;
+  const sel = $("sort");
+  if (sel.dataset.view !== view) {
+    sel.dataset.view = view;
+    sel.innerHTML = cols.filter(c => c[0] !== "notes").map(([k, l]) => [-1, 1].map(d => `<option value="${k}|${d}">${l} ${d < 0 ? "(high to low)" : "(low to high)"}</option>`).join("")).join("");
+  }
+  sel.value = sortKey + "|" + sortDir;
   $("tbl").querySelectorAll("th").forEach(th => th.onclick = () => {
     const k = th.dataset.k;
     sortDir = k === sortKey ? -sortDir : (k === "wallet" || k === "notes" ? 1 : -1);
@@ -106,6 +132,7 @@ function setView(v) {
 $("t-sellers").onclick = () => setView("sellers");
 $("t-holders").onclick = () => setView("holders");
 $("q").oninput = render;
+$("sort").onchange = e => { const [k, d] = e.target.value.split("|"); sortKey = k; sortDir = +d; render(); };
 
 fetch("data.json?t=" + Date.now()).then(r => { if (!r.ok) throw 0; return r.json(); })
   .then(d => { D = d; stats(); render(); })
