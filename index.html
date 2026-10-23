@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token profit tracker</title>
+<style>
+:root{--bg:#f2f5f7;--card:#fff;--ink:#14202b;--mute:#5d6b78;--line:#d5dce2;--gain:#0b7a4b;--loss:#b3261e;--acc:#2b5c8a;--warn:#fff3cd}
+@media (prefers-color-scheme:dark){:root{--bg:#10171d;--card:#18222b;--ink:#e6edf2;--mute:#93a3b0;--line:#2b3946;--gain:#4cc38a;--loss:#ff7b72;--acc:#7db3e6;--warn:#4a3d10}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1180px;margin:0 auto;padding:24px 16px 48px}
+h1{margin:0 0 4px;font-size:26px;letter-spacing:-.01em}
+.sub{color:var(--mute);font-size:13px;word-break:break-all}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:20px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.stat span{color:var(--mute);font-size:12.5px}
+.warn{background:var(--warn);padding:8px 12px;border-radius:6px;margin:12px 0;font-size:14px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0 12px}
+.tab{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:7px 14px;border-radius:6px;font:inherit;cursor:pointer}
+.tab[aria-selected=true]{background:var(--acc);border-color:var(--acc);color:#fff}
+input{flex:1;min-width:180px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font:inherit}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.wrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--card)}
+table{border-collapse:collapse;width:100%}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap;font-size:14px}
+th{cursor:pointer;user-select:none;color:var(--mute);font-weight:600;position:sticky;top:0;background:var(--card)}
+th[aria-sort=ascending]::after{content:" ▲"}th[aria-sort=descending]::after{content:" ▼"}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+td.notes{white-space:normal;min-width:200px;color:var(--mute);font-size:13px}
+.pos{color:var(--gain)}.neg{color:var(--loss)}
+a{color:var(--acc)}
+.foot{color:var(--mute);font-size:12.5px;margin-top:16px}
+</style>
+</head>
+<body>
+<main>
+<h1>Token profit tracker</h1>
+<div class="sub" id="meta">Loading…</div>
+<div id="warn"></div>
+<div class="stats" id="stats"></div>
+<div class="bar" role="tablist">
+  <button class="tab" role="tab" id="t-sellers" aria-selected="true">Sellers</button>
+  <button class="tab" role="tab" id="t-holders" aria-selected="false">Current holders</button>
+  <input id="q" type="search" placeholder="Search wallet address" aria-label="Search wallet address">
+</div>
+<div class="wrap"><table id="tbl"></table></div>
+<p class="foot">Average-cost method per wallet. SOL is converted at the hourly price of each trade; TSMx at its current price (approximation). Pool and bonding-curve accounts are excluded; network fees are not counted. All values in USD.</p>
+</main>
+<script>
+const COLS = {
+  sellers: [["wallet","Wallet"],["bought","Bought","m"],["sold","Sold","m"],["realized","Realised profit","m",1],["balance","Tokens held","n"],["trades","Buys / sells","t"],["notes","Notes","x"]],
+  holders: [["wallet","Wallet"],["balance","Tokens held","n"],["value","Value now","m"],["cost","Cost of held","m"],["unrealized","Unrealised P/L","m",1],["realized","Realised so far","m",1],["notes","Notes","x"]]
+};
+let D, view = "sellers", sortKey = "realized", sortDir = -1;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const money = x => (x < 0 ? "-" : "") + "$" + Math.abs(x).toLocaleString("en-US", {minimumFractionDigits: Math.abs(x) >= 1 ? 2 : 4, maximumFractionDigits: Math.abs(x) >= 1 ? 2 : 4});
+const cls = x => x > 0 ? "pos" : x < 0 ? "neg" : "";
+
+function stats() {
+  const age = Math.round((Date.now() / 1000 - D.generated) / 60);
+  $("meta").textContent = `Token ${D.token} · ${D.n_tx.toLocaleString()} transactions · ${D.n_wallets.toLocaleString()} wallets · updated ${age < 1 ? "just now" : age < 90 ? age + " min ago" : new Date(D.generated * 1000).toLocaleString()}`;
+  $("warn").innerHTML = D.warning ? `<div class="warn">${esc(D.warning)}</div>` : "";
+  const s = (label, val, c = "") => `<div class="stat"><span>${label}</span><b class="${c}">${val}</b></div>`;
+  $("stats").innerHTML =
+    s("Token price now (" + esc(D.price_source) + ")", "$" + D.price_now.toFixed(8)) +
+    s("Realised profit, all sellers", money(D.total_realized), cls(D.total_realized)) +
+    s("Unrealised P/L, all holders", money(D.total_unrealized), cls(D.total_unrealized)) +
+    s("…of which in wallets that received tokens by transfer", money(D.unrealized_transfer), cls(D.unrealized_transfer));
+}
+
+function render() {
+  const cols = COLS[view], q = $("q").value.trim().toLowerCase();
+  let rows = D[view].map(r => ({...r, trades: r.buys + "/" + r.sells}));
+  if (q) rows = rows.filter(r => r.wallet.toLowerCase().includes(q));
+  rows.sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    return (typeof x === "string" ? x.localeCompare(y) : x - y) * sortDir;
+  });
+  const head = cols.map(([k, l, t]) => `<th data-k="${k}" class="${t === "m" || t === "n" ? "n" : ""}" aria-sort="${k === sortKey ? (sortDir > 0 ? "ascending" : "descending") : "none"}">${l}</th>`).join("");
+  const body = rows.map(r => "<tr>" + cols.map(([k, , t, signed]) => {
+    const v = r[k];
+    if (k === "wallet") return `<td><a href="https://solscan.io/account/${v}" target="_blank" rel="noopener" title="${v}">${v.slice(0, 4)}…${v.slice(-4)}</a></td>`;
+    if (t === "m") return `<td class="n ${signed ? cls(v) : ""}">${money(v)}</td>`;
+    if (t === "n") return `<td class="n">${v.toLocaleString("en-US", {maximumFractionDigits: 2})}</td>`;
+    if (t === "x") return `<td class="notes">${esc(v)}</td>`;
+    return `<td>${esc(v)}</td>`;
+  }).join("") + "</tr>").join("");
+  $("tbl").innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${cols.length}">Nothing to show.</td></tr>`}</tbody>`;
+  $("tbl").querySelectorAll("th").forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    sortDir = k === sortKey ? -sortDir : (k === "wallet" || k === "notes" ? 1 : -1);
+    sortKey = k; render();
+  });
+}
+
+function setView(v) {
+  view = v; sortKey = v === "sellers" ? "realized" : "balance"; sortDir = -1;
+  $("t-sellers").setAttribute("aria-selected", v === "sellers");
+  $("t-holders").setAttribute("aria-selected", v === "holders");
+  render();
+}
+
+$("t-sellers").onclick = () => setView("sellers");
+$("t-holders").onclick = () => setView("holders");
+$("q").oninput = render;
+
+fetch("data.json?t=" + Date.now()).then(r => { if (!r.ok) throw 0; return r.json(); })
+  .then(d => { D = d; stats(); render(); })
+  .catch(() => { $("meta").textContent = "No data yet. Run the “Update data” workflow once (Actions tab), then reload."; });
+</script>
+</body>
+</html>
