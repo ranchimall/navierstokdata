@@ -1,0 +1,45 @@
+name: Update data
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes
+  workflow_dispatch:          # manual "Run workflow" button
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      # keeps trades.db between runs so only new transactions are downloaded
+      - uses: actions/cache@v4
+        with:
+          path: trades.db
+          key: trades-db-${{ github.run_id }}
+          restore-keys: trades-db-
+
+      - name: Run tracker
+        env:
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+        run: python tracker.py
+
+      - name: Publish data.json
+        run: |
+          git config user.name "tracker-bot"
+          git config user.email "tracker-bot@users.noreply.github.com"
+          git add data.json
+          git diff --staged --quiet || (git commit -m "Update data" && git push)
